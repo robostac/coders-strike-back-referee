@@ -384,26 +384,31 @@ func main() {
 	}
 	playerTimeout[0] = 100
 	playerTimeout[1] = 100
-
+	rand.Seed(time.Now().UTC().UnixNano())
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	startText := strings.Split(scanner.Text(), " ")
-	if startText[0] != "###Start" {
-		fmt.Fprintln(os.Stderr, "Error with initial input")
-		os.Exit(-1)
-	}
-	players, err := strconv.Atoi(startText[1])
-	if err != nil || players != 2 {
-		fmt.Fprintln(os.Stderr, "Error with player count input")
-		os.Exit(-1)
-	}
-	if len(startText) >= 3 {
-		//custom seed
-		v, err := strconv.ParseInt(startText[2], 10, 64)
-		if err != nil {
-			rand.Seed(v)
+	started := false
+	var players int
+
+	for started == false {
+		scanner.Scan()
+		startText := strings.Split(scanner.Text(), " ")
+		if startText[0] == "###Start" {
+			var err error
+			players, err = strconv.Atoi(startText[1])
+			if err != nil || players != 2 {
+				fmt.Fprintln(os.Stderr, "Error with player count input")
+				os.Exit(-1)
+			}
+			started = true
+		} else if startText[0] == "###Seed" {
+			v, err := strconv.ParseInt(startText[1], 10, 64)
+			fmt.Fprintln(os.Stderr, v)
+			if err == nil {
+				rand.Seed(v)
+			}
 		} else {
-			rand.Seed(time.Now().UTC().UnixNano())
+			fmt.Fprintln(os.Stderr, "Unsupported startup command: ", startText[0])
+			os.Exit(0)
 		}
 	}
 	currentMap := possibleMaps[rand.Intn(possibleMapCount)]
@@ -530,7 +535,9 @@ func getPlayerInput(player int, scanner *bufio.Scanner) ([2]playerMove, bool) {
 	valid := true
 	fmt.Printf("###Output %d 2\n", player)
 	for i := range pm {
-		scanner.Scan()
+		if scanner.Scan() == false {
+			os.Exit(0)
+		}
 		var thrust string
 		fmt.Sscanf(scanner.Text(), "%f %f %s\n", &pm[i].target.x, &pm[i].target.y, &thrust)
 
