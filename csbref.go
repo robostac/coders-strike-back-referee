@@ -13,13 +13,11 @@ import (
 
 //GAME CONSTANTS
 const podRSQ = 800 * 800
-const cpRSQ = 599 * 599
+const cpRSQ = 600 * 600
 const podCount = 4
 const minImpulse = 120
 const frictionVal = 0.85
 const checkpointGenerationGap = 30
-
-const p2Bug = true //run turns in serial (slower) so the p2 angle bug can be tested
 
 //MATH CONSTANTS
 const fullCircle = (2 * math.Pi)
@@ -44,6 +42,7 @@ type object struct {
 	next        int
 	shieldtimer int
 	boosted     int
+	won         bool
 }
 
 type playerMove struct {
@@ -79,91 +78,108 @@ func (p *point) dot(n point) float64 {
 	return p.x*n.x + p.y*n.y
 }
 
+func (p *point) norm() float64 {
+	return (math.Sqrt(((p.x * p.x) + (p.y * p.y))))
+}
+
 func (g *game) nextTurn() {
-	t := 0.0
-	for t < 1.0 {
-		first := 100.0
+	t := 1.0
+	curps := [4]point{g[0].p, g[1].p, g[2].p, g[3].p}
+	for t > 0.0 {
+		first := t
 		cli := 0
 		clj := 0
-		for i := 0; i < podCount; i++ {
-			for j := i + 1; j < podCount; j++ {
+		for i := podCount - 1; i > 0; i-- {
+			for j := i - 1; j >= 0; j-- {
+
 				tx := g[i].newCollide(&g[j], podRSQ)
-				if (tx > 0) && tx+t < 1.0 && (tx < first) {
+				if tx <= first {
 					first = tx
 					cli = i
 					clj = j
 				}
 			}
 		}
-		if cli == clj {
-			g.forwardTime(1.0 - t)
-			t = 1.0
-		} else {
-			g.forwardTime(first)
+
+		g.forwardTime(first)
+		t -= first
+		if cli != clj {
 			g.bounce(cli, clj)
-			t += first
+
+		}
+		if t > 0 {
+			for i := 0; i < podCount; i++ {
+				if (cpCollide(curps[i], g[i].p, globalCp[g[i].next], cpRSQ)) > 0 {
+					g[i].passCheckpoint(i)
+				}
+			}
+			curps = [4]point{g[0].p, g[1].p, g[2].p, g[3].p}
 		}
 	}
 	for i := 0; i < podCount; i++ {
-		g[i].endTurn()
-
+		g[i].endTurn(i)
+		if (cpCollide(curps[i], g[i].p, globalCp[g[i].next], cpRSQ)) > 0 {
+			g[i].passCheckpoint(i)
+		}
 	}
 	playerTimeout[0]--
 	playerTimeout[1]--
+
 }
+
+const EPSILON = .00001
 
 func (g *game) bounce(p1 int, p2 int) {
 
 	oa := &g[p1]
 	ob := &g[p2]
 
+	normal := ob.p
+	normal.x -= oa.p.x
+	normal.y -= oa.p.y
+	dd := normal.norm()
+	normal.x /= dd
+	normal.y /= dd
+
+	relv := oa.s
+	relv.x -= ob.s.x
+	relv.y -= ob.s.y
+
 	var m1 float64 = 1
 	var m2 float64 = 1
 	if oa.shieldtimer == 4 {
-		m1 = 10
+		m1 = 0.1
 	}
 	if ob.shieldtimer == 4 {
-		m2 = 10
+		m2 = 0.1
 	}
-	mcoeff := ((m1 + m2) / (m1 * m2))
-
-	nx := (oa.p.x - ob.p.x)
-	ny := (oa.p.y - ob.p.y)
-
-	nxnysquare := nx*nx + ny*ny
-	dvx := (oa.s.x - ob.s.x)
-	dvy := (oa.s.y - ob.s.y)
-
-	product := nx*dvx + ny*dvy
-
-	fx := (nx * product) / (nxnysquare * mcoeff)
-	fy := (ny * product) / (nxnysquare * mcoeff)
-
-	icheck := (fx*fx + fy*fy)
-
-	impulse := math.Sqrt(icheck)
-	oa.s.x -= fx / m1
-	oa.s.y -= fy / m1
-	ob.s.x += fx / m2
-	ob.s.y += fy / m2
-	if impulse < minImpulse {
-		fx = fx * minImpulse / impulse
-		fy = fy * minImpulse / impulse
+	force := normal.dot(relv) / (m1 + m2)
+	if force < 120 {
+		force += 120
+	} else {
+		force += force
 	}
-	oa.s.x -= fx / m1
-	oa.s.y -= fy / m1
-	ob.s.x += fx / m2
-	ob.s.y += fy / m2
+	impulse := normal
+	impulse.x *= -force
+	impulse.y *= -force
+	oa.s.x += impulse.x * m1
+	oa.s.y += impulse.y * m1
+	ob.s.x += -impulse.x * m2
+	ob.s.y += -impulse.y * m2
+	if dd <= 800 {
+		dd -= 800
+		oa.p.x += (normal.x * -(-dd/2 + EPSILON))
+		oa.p.y += (normal.y * -(-dd/2 + EPSILON))
+		ob.p.x += (normal.x * (-dd/2 + EPSILON))
+		ob.p.y += (normal.y * (-dd/2 + EPSILON))
+	}
 }
 
 func getAngle(start point, end point) float64 {
-	d := (distance(start, end))
-	dx := (end.x - start.x) / (d)
+
+	dx := (end.x - start.x)
 	dy := (end.y - start.y)
-	a := (math.Acos((dx)))
-	if dy < 0 {
-		a = fullCircle - a
-	}
+	a := (math.Atan2(dy, dx))
 	return a
 }
 
@@ -179,34 +195,33 @@ func distance(p1 point, p2 point) float64 {
 	return (math.Sqrt(float64(distance2(p1, p2))))
 }
 
+func (obj *object) passCheckpoint(podn int) {
+
+	obj.next = (obj.next + 1)
+	if obj.next >= globalNumCp {
+		obj.next = globalNumCp - 1
+		obj.won = true
+	}
+	if podn < 2 {
+		playerTimeout[0] = 100
+	} else {
+		playerTimeout[1] = 100
+	}
+}
+
 func (g *game) forwardTime(t float64) {
 	for i := 0; i < podCount; i++ {
 		obj := &g[i]
-		cp := object{}
-		cp.p = globalCp[g[i].next]
-		tx := obj.newCollide(&cp, cpRSQ)
-		if (tx > 0) && tx < t {
-			obj.next = (obj.next + 1) % globalNumCp
-			if i < 2 {
-				playerTimeout[0] = 100
-			} else {
-				playerTimeout[1] = 100
-			}
-		}
 		obj.p.x += (obj.s.x * (t))
 		obj.p.y += (obj.s.y * (t))
 	}
 }
 
 func round(x float64) float64 {
-	if x > 0 {
-		x = (math.Floor((x) + 0.5))
-	} else {
-		x = (math.Ceil((x) - 0.5))
-	}
+
+	x = (math.Floor((x) + 0.50000))
 	return x
 }
-
 func (obj *object) newCollide(b *object, rsq float64) float64 {
 
 	p := point{b.p.x - obj.p.x, b.p.y - obj.p.y}
@@ -220,33 +235,67 @@ func (obj *object) newCollide(b *object, rsq float64) float64 {
 	dot := p.dot(v)
 
 	if dot > 0 {
-		return -1
+		return 10
 	}
 
 	vLength2 := v.x*v.x + v.y*v.y
 	disc := dot*dot - vLength2*(pLength2-rsq)
 
 	if disc < 0 {
-		return -1
+		return 10
 	}
 
-	discdist := (math.Sqrt((disc)))
+	discdist := (math.Sqrt(disc))
 	t1 := (-dot - discdist) / vLength2
-	//t2 := (-dot + discdist) / vLength2
-	if t1 >= 0 && t1 < 1 {
-		return (t1)
-	}
-	return -1
+	return float64(t1)
 }
 
-func (obj *object) applyRotate(rotateAngle float64) {
+func cpCollide(p1 point, p2 point, cp point, cpRSQ float64) byte {
+	dx := (p2.x - p1.x)
+	dy := (p2.y - p1.y)
+	pp := p1
+	pd2 := dx*dx + dy*dy
+
+	if pd2 != 0 {
+		u := ((cp.x-p1.x)*dx + (cp.y-p1.y)*dy) / pd2
+		if u > 1 {
+			pp = p2
+		} else if u > 0 {
+			pp.x = p1.x + u*dx
+			pp.y = p1.y + u*dy
+		}
+	}
+
+	pp.x -= cp.x
+	pp.y -= cp.y
+	if ((pp.x * pp.x) + (pp.y * pp.y)) < cpRSQ {
+		return 1
+	}
+	return 0
+}
+
+func (obj *object) applyRotate(p point) {
+
+	a := getAngle(obj.p, p)
+
+	rotateAngle := obj.diffAngle(p)
 	if rotateAngle < -maxRotate {
-		rotateAngle = -maxRotate
+		a = obj.angle - maxRotate
 	}
 	if rotateAngle > maxRotate {
-		rotateAngle = maxRotate
+		a = obj.angle + maxRotate
 	}
-	obj.angle = rotateAngle + obj.angle
+	obj.angle = a
+	/*for obj.angle < 0 {
+		obj.angle += fullCircle
+	}
+	for obj.angle > fullCircle {
+		obj.angle -= fullCircle
+	}*/
+}
+
+func (obj *object) applyRotateFirst(rotateAngle float64) {
+	obj.angle = rotateAngle
 	for obj.angle < 0 {
 		obj.angle += fullCircle
 	}
@@ -261,15 +310,18 @@ func (obj *object) applyThrust(t int) {
 	obj.s.y += (cs * float64(t))
 }
 
-func (obj *object) applyRotateThrust(a float64, t int) {
-	obj.applyRotate(a)
-	obj.applyThrust(t)
-}
+func (obj *object) endTurn(podn int) {
+	if obj.s.x > 0 {
+		obj.s.x = (math.Trunc((obj.s.x * frictionVal)))
+	} else {
+		obj.s.x = (math.Trunc((obj.s.x * frictionVal)))
+	}
+	if obj.s.y > 0 {
+		obj.s.y = (math.Trunc((obj.s.y * frictionVal)))
+	} else {
+		obj.s.y = (math.Trunc((obj.s.y * frictionVal)))
+	}
 
-func (obj *object) endTurn() {
-
-	obj.s.x = (math.Trunc((obj.s.x * frictionVal)))
-	obj.s.y = (math.Trunc((obj.s.y * frictionVal)))
 	obj.p.x = round(obj.p.x)
 	obj.p.y = round(obj.p.y)
 
@@ -279,19 +331,10 @@ func (obj *object) endTurn() {
 }
 
 func (obj *object) diffAngle(p point) float64 {
+
 	a := getAngle(obj.p, p)
-	right := a - obj.angle
-	if obj.angle > a {
-		right = fullCircle - obj.angle + a
-	}
-	left := obj.angle - a
-	if obj.angle < a {
-		left = obj.angle + fullCircle - a
-	}
-	if right < left {
-		return right
-	}
-	return -left
+	da := math.Mod(a-obj.angle, math.Pi*2)
+	return math.Mod(2*da, math.Pi*2) - da
 }
 
 func testMode() {
@@ -309,17 +352,10 @@ func testMode() {
 	scanner.Scan()
 	fmt.Sscan(scanner.Text(), &nTest)
 	var g game
+	initialiseGame(&g, globalCp[:])
 	for tn := 0; tn < nTest; tn++ {
 		for i := 0; i < podCount; i++ {
-			var p object
-			var angle float64
 			scanner.Scan()
-			fmt.Sscan(scanner.Text(), &p.p.x, &p.p.y, &p.s.x, &p.s.y, &angle, &p.next, &p.shieldtimer, &p.boosted)
-			if angle < 0 {
-				angle += 360
-			}
-			p.angle = (angle) * degToRad
-			g[i] = p
 		}
 		for i := 0; i < podCount; i++ {
 			var px, py float64
@@ -344,8 +380,18 @@ func testMode() {
 			if g[i].shieldtimer > 0 {
 				t = 0
 			}
-			angle := g[i].diffAngle(point{px, py})
-			g[i].applyRotate(angle)
+			dest := point{px, py}
+			if dest == g[i].p {
+				continue
+			}
+			if tn == 0 {
+				g[i].angle = 0
+				angle := g[i].diffAngle(dest)
+				g[i].applyRotateFirst(angle)
+			} else {
+
+				g[i].applyRotate(dest)
+			}
 			g[i].applyThrust(t)
 		}
 		g.nextTurn()
@@ -370,12 +416,13 @@ func initialiseGame(g *game, m gameMap) {
 		p := &g[podN]
 		p.angle = -1 * degToRad
 		p.next = 1
-		p.p.x = m[0].x + cp1minus0.x*startPointMult[podN].x
-		p.p.y = m[0].y + cp1minus0.y*startPointMult[podN].y
+		p.p.x = round(m[0].x + cp1minus0.y*startPointMult[podN].x)
+		p.p.y = round(m[0].y + cp1minus0.x*startPointMult[podN].y)
 	}
 }
 
 func main() {
+	validateMode := false
 	if len(os.Args) > 1 {
 		if os.Args[1] == "-test" {
 			testMode()
@@ -406,6 +453,10 @@ func main() {
 			if err == nil {
 				rand.Seed(v)
 			}
+		} else if startText[0] == "###Validate" {
+			validateMode = true
+			players = 2
+			started = true
 		} else {
 			fmt.Fprintln(os.Stderr, "Unsupported startup command: ", startText[0])
 			os.Exit(0)
@@ -415,6 +466,26 @@ func main() {
 	for i, v := range currentMap {
 		currentMap[i].x = v.x + float64(rand.Intn(checkpointGenerationGap*2+1)-checkpointGenerationGap)
 		currentMap[i].y = v.y + float64(rand.Intn(checkpointGenerationGap*2+1)-checkpointGenerationGap)
+	}
+	for i := len(currentMap) - 1; i > 0; i-- {
+		v := rand.Intn(i)
+		currentMap[v], currentMap[i] = currentMap[i], currentMap[v]
+	}
+	if validateMode {
+		var ncp int
+		scanner.Scan()
+		fmt.Sscan(scanner.Text(), &ncp)
+		currentMap = make(gameMap, ncp)
+
+		for i := range currentMap {
+			var x float64
+			var y float64
+			scanner.Scan()
+			fmt.Sscan(scanner.Text(), &x, &y)
+			currentMap[i].x = x
+			currentMap[i].y = y
+		}
+
 	}
 	//setup global checkpoints
 	laps := 3
@@ -432,50 +503,51 @@ func main() {
 	outputSetup(currentMap, 2, laps)
 	for turnCount := 0; turnCount < 500; turnCount++ {
 		var moves [4]playerMove
-		if p2Bug == false {
-			for player := 0; player < players; player++ {
-				givePlayerOutput(&g, player, currentMap)
-			}
-		}
 		for player := 0; player < players; player++ {
-			if p2Bug {
-				givePlayerOutput(&g, player, currentMap)
-			}
+			givePlayerOutput(&g, player, currentMap)
+
 			theseMoves, valid := getPlayerInput(player, scanner)
 			if valid == false {
+				fmt.Fprintln(os.Stderr, "INVALID INPUT", theseMoves)
 				lostGame(player)
 			}
-			for i := range theseMoves {
-				move := &theseMoves[i]
-				pod := &g[player*2+i]
-				if move.boost {
-					if pod.boosted == 0 {
-						pod.boosted = 1
-						move.thrust = 650
-					} else {
-						move.thrust = 200
-					}
-				}
-				if move.shield {
-					pod.shieldtimer = 4
-				}
-				if pod.shieldtimer > 0 {
-					move.thrust = 0
-				}
-				//do thise here to replicate player 2 bug
-				if turnCount == 0 {
-					pod.angle = pod.diffAngle(move.target)
-				} else {
-					pod.applyRotate(pod.diffAngle(move.target))
-				}
-				moves[player*2+i] = *move
+			for i, v := range theseMoves {
+				moves[player*2+i] = v
 			}
+
 		}
+
 		for podN := range g {
+
 			pod := &g[podN]
+			move := &moves[podN]
+			if move.boost {
+				if pod.boosted == 0 {
+					pod.boosted = 1
+					move.thrust = 650
+				} else {
+					move.thrust = 200
+				}
+			}
+			if move.shield {
+				pod.shieldtimer = 4
+			}
+			if pod.shieldtimer > 0 {
+				move.thrust = 0
+			}
+			if move.target == pod.p {
+				continue
+			}
+			if turnCount == 0 {
+				pod.angle = 0
+				pod.angle = pod.diffAngle(move.target)
+			} else {
+				pod.applyRotate(move.target)
+			}
 			pod.applyThrust(moves[podN].thrust)
 		}
 		g.nextTurn()
+
 		if playerTimeout[0] <= 0 {
 			lostGame(0)
 		}
@@ -484,7 +556,7 @@ func main() {
 		}
 		for podN := range g {
 			pod := &g[podN]
-			if pod.next == 0 {
+			if pod.won {
 				if podN < 2 {
 					wonGame(0)
 				} else {
@@ -582,5 +654,6 @@ func givePlayerOutput(g *game, player int, m gameMap) {
 	for _, podN := range pods {
 		p := &g[podN]
 		fmt.Printf("%d %d %d %d %d %d\n", int(p.p.x), int(p.p.y), int(p.s.x), int(p.s.y), int(round(p.angle*radToDeg)), p.next%len(m))
+		//		fmt.Fprintf(os.Stderr, "%d %d %d %d %d %d\n", int(p.p.x), int(p.p.y), int(p.s.x), int(p.s.y), int(round(p.angle*radToDeg)), p.next)
 	}
 }
