@@ -1,4 +1,3 @@
-
 import math
 import json
 import sys
@@ -8,7 +7,7 @@ import os
 import time
 import argparse
 
-ON_POSIX = 'posix' in sys.builtin_module_names
+ON_POSIX = "posix" in sys.builtin_module_names
 
 
 ref = sys.argv[1]
@@ -16,21 +15,31 @@ ref = sys.argv[1]
 json_in = open(sys.argv[2], "r")
 a = json.load(json_in)
 
-suc = a['success']
+if "success" in a:
+    suc = a["success"]
+else:
+    suc = a
 
 print("Validating: ", sys.argv[2])
 
-frames = suc['gameResult']['frames']
+
+frames = suc["gameResult"]["frames"]
 for x in frames:
-    x['view'] = x['view'].split("\n")
+    x["view"] = x["view"].split("\n")
 
-setup = frames[0]['view']
+setup = frames[0]["view"]
 # strip the extra startup data
-frames[0]['view'] = [frames[0]['view'][0]] + frames[0]['view'][5:]
+frames[0]["view"] = [frames[0]["view"][0]] + frames[0]["view"][5:]
 
 
-referee = subprocess.Popen([ref], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                           bufsize=1, universal_newlines=True, close_fds=ON_POSIX)
+referee = subprocess.Popen(
+    [ref],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    bufsize=1,
+    universal_newlines=True,
+    close_fds=ON_POSIX,
+)
 
 
 # startup command
@@ -40,7 +49,7 @@ print("###Validate", file=referee.stdin)
 cpsstr = [int(x) for x in setup[3].split(" ")]
 cps = []
 for x in range(0, len(cpsstr), 2):
-    cps.append((cpsstr[x], cpsstr[x+1]))
+    cps.append((cpsstr[x], cpsstr[x + 1]))
 print(len(cps), file=referee.stdin)
 for cp in cps:
     print(cp[0], cp[1], file=referee.stdin)
@@ -65,10 +74,15 @@ def single_pod_input(pod_line):
 
 
 def get_ref_input(data):
-    return [single_pod_input(data[1]), single_pod_input(data[3]), single_pod_input(data[5]), single_pod_input(data[7])]
+    return [
+        single_pod_input(data[1]),
+        single_pod_input(data[3]),
+        single_pod_input(data[5]),
+        single_pod_input(data[7]),
+    ]
 
 
-cur_input = (get_ref_input(frames[0]['view']))
+cur_input = get_ref_input(frames[0]["view"])
 
 
 for x in range(2):
@@ -117,7 +131,8 @@ while True:
                     val -= 360
             if input_val[pos] != val:
                 print(
-                    f"Input error turn {turn} rec:'{val}' exp:'{input_val[pos]}' index: {pos} pod: {input_pos}")
+                    f"Input error turn {turn} rec:'{val}' exp:'{input_val[pos]}' index: {pos} pod: {input_pos}"
+                )
                 error = True
     if error:
         print(len(cps), file=sys.stderr)
@@ -133,13 +148,13 @@ while True:
     if ignore[0] == "###End":
         results = [int(x) for x in ignore[1:]]
         break
-    if 'stdout' not in fr:
+    if "stdout" not in fr:
         if turn % 2 > 0:
             results = [0, 1]
         else:
             results = [1, 0]
         break
-    output = fr['stdout'].split("\n")
+    output = fr["stdout"].split("\n")
     if len(output) < 3:
         if turn % 2 > 0:
             results = [0, 1]
@@ -152,17 +167,17 @@ while True:
         outputind += 1
         print(outline.strip(), file=referee.stdin)
 
-    if fr['keyframe']:
+    if fr["keyframe"]:
         outputind = 0
         lastinput = cur_input
         lastoutput = curoutput
-        cur_input = get_ref_input(fr['view'])
+        cur_input = get_ref_input(fr["view"])
     turn += 1
-actual_results = suc['gameResult']['ranks']
+actual_results = suc["gameResult"]["ranks"]
+
 for p, x in enumerate(results):
     if actual_results[p] != x:
         print(f"RESULT ERROR: exp: {actual_results}  rec: {results}")
         exit(0)
 
 print(sys.argv[2], " is valid")
-
